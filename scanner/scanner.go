@@ -1,27 +1,30 @@
 package scanner
 
 import (
+	"bufio"
 	"fmt"
+	"io"
 	"strconv"
+	"strings"
 	"unicode"
 )
 
 // Scanner scans a source text and turns it into a series of tokens.
 type Scanner struct {
-	source []rune
+	source bufio.Reader
 
 	// Tokens is the series of scanned tokens from the source text
 	Tokens chan Token
 	Errors chan error
 	Done   chan bool
 
-	current int
+	atEnd bool
 	line    int
 }
 
 // Scan will scan a source and return the tokens and errors it found
 func Scan(source string) (tokens []Token, err []error) {
-	s := NewScanner(source)
+	s := NewScanner(strings.NewReader(source))
 	go s.Scan()
 
 Loop:
@@ -38,11 +41,9 @@ Loop:
 	return
 }
 
-// NewScanner creates a new scanner from a source string
-// TODO: Make this take in a Reader instead of a string
-func NewScanner(source string) *Scanner {
+func NewScanner(source io.Reader) *Scanner {
 	return &Scanner{
-		source: []rune(source),
+		source: *bufio.NewReader(source),
 		Tokens: make(chan Token),
 		Errors: make(chan error),
 		Done:   make(chan bool),
@@ -56,7 +57,7 @@ func (s *Scanner) Scan() {
 	defer close(s.Done)
 	defer func() { s.Done <- true }()
 
-	for !s.atEnd() {
+	for !s.atEnd {
 		s.match()
 	}
 
@@ -173,7 +174,7 @@ func (s *Scanner) match() {
 func (s *Scanner) blockComment(next rune) {
 	foundStar := false
 Loop:
-	for ; !s.atEnd(); next, _ = s.advance() {
+	for ; !s.atEnd; next, _ = s.advance() {
 
 		switch {
 		case next == '\n':
@@ -193,7 +194,7 @@ Loop:
 }
 
 func (s *Scanner) lineComment(next rune) {
-	for ; next != '\n' && !s.atEnd(); next, _ = s.advance() {
+	for ; next != '\n' && !s.atEnd; next, _ = s.advance() {
 	}
 	s.line++
 }
@@ -217,21 +218,31 @@ func (s *Scanner) doubleChar(t TokenType, lit rune) {
 	}
 }
 
-func (s *Scanner) atEnd() bool {
-	return s.current >= len(s.source)
-}
-
 func (s *Scanner) advance() (rune, bool) {
-	r, done := s.peek()
-	s.current++
-	return r, done
+	if s.atEnd {
+		return 0, true
+	}
+	r, _, err := s.source.ReadRune()
+	if err != nil {
+		if err != io.EOF{
+			s.Errors <- err
+		}
+		s.atEnd = true
+		return r, true
+	}
+	return r, false
 }
 
 func (s *Scanner) peek() (rune, bool) {
-	if s.atEnd() {
-		return 0, true
+	r, done := s.advance()
+	if done {
+		return r, done
 	}
-	return s.source[s.current], false
+	err := s.source.UnreadRune()
+	if err != nil {
+		s.Errors <- err
+	}
+	return r, done
 }
 
 func (s *Scanner) handleDigits(r rune) {
@@ -239,8 +250,10 @@ func (s *Scanner) handleDigits(r rune) {
 	isfloat := false
 
 Loop:
-	for !s.atEnd() {
-		switch r, _ := s.advance(); {
+	for !s.atEnd {
+		switch r, done := s.advance(); {
+		case done:
+			break Loop
 		case unicode.IsDigit(r):
 			lex = append(lex, r)
 		case r == '.':
@@ -252,7 +265,10 @@ Loop:
 			isfloat = true
 			lex = append(lex, r)
 		default:
-			s.current--
+			err := s.source.UnreadRune()
+			if err != nil {
+				s.Errors <- err
+			}
 			break Loop
 		}
 	}
@@ -286,12 +302,17 @@ Loop:
 func (s *Scanner) handleLetters(r rune) {
 	lex := []rune{r}
 Loop:
-	for !s.atEnd() {
-		switch r, _ := s.advance(); {
+	for !s.atEnd {
+		switch r, done := s.advance(); {
+		case done:
+			break Loop
 		case unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_':
 			lex = append(lex, r)
 		default:
-			s.current--
+			err := s.source.UnreadRune()
+			if err != nil {
+				s.Errors <- err
+			}
 			break Loop
 		}
 	}
@@ -317,8 +338,10 @@ func (s *Scanner) handleString(r rune) {
 	lit := []rune{}
 	foundEnd := false
 Loop:
-	for !s.atEnd() {
-		switch r, _ := s.advance(); {
+	for !s.atEnd {
+		switch r, done := s.advance(); {
+		case done:
+			break Loop
 		case r == '"':
 			lex = append(lex, r)
 			foundEnd = true

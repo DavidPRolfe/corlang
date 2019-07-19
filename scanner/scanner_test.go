@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"fmt"
 	"github.com/stretchr/testify/assert"
 	"testing"
 )
@@ -538,6 +539,8 @@ func TestSingleToken(t *testing.T) {
 
 		assert.Equal(t, len(tc.ExpectedError), len(errs))
 		for i, err := range errs {
+			fmt.Println(tc.Source)
+			fmt.Println(err)
 			assert.Equal(t, tc.ExpectedError[i], err)
 		}
 	}
