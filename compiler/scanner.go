@@ -1,4 +1,4 @@
-package scanner
+package compiler
 
 import (
 	"bufio"
@@ -19,7 +19,7 @@ type Scanner struct {
 	Done   chan bool
 
 	atEnd bool
-	line    int
+	line  int
 }
 
 // Scan will scan a source and return the tokens and errors it found
@@ -224,7 +224,7 @@ func (s *Scanner) advance() (rune, bool) {
 	}
 	r, _, err := s.source.ReadRune()
 	if err != nil {
-		if err != io.EOF{
+		if err != io.EOF {
 			s.Errors <- err
 		}
 		s.atEnd = true
